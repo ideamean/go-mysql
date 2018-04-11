@@ -164,6 +164,66 @@ func (c *Canal) runSyncBinlog() error {
 	return nil
 }
 
+func (c *Canal) handleSignedness(t *schema.Table, e *replication.RowsEvent) error {
+	if len(t.Columns) != int(e.ColumnCount) {
+		return errors.Errorf("no corresponding table `%s.%s` schema", t.Schema, t.Name)
+	}
+
+	for i, row := range e.Rows {
+		for j, v := range row {
+			if v != nil {
+				if !t.Columns[j].IsUnsigned {
+					OK := true
+					switch e.Table.ColumnType[j] {
+					case mysql.MYSQL_TYPE_LONG:
+						r, ok := v.(uint32)
+						if ok {
+							e.Rows[i][j] = int32(r)
+						} else {
+							OK = false
+						}
+					case mysql.MYSQL_TYPE_TINY:
+						r, ok := v.(uint8)
+						if ok {
+							e.Rows[i][j] = int8(r)
+						} else {
+							OK = false
+						}
+					case mysql.MYSQL_TYPE_SHORT:
+						r, ok := v.(uint16)
+						if ok {
+							e.Rows[i][j] = int16(r)
+						} else {
+							OK = false
+						}
+					case mysql.MYSQL_TYPE_INT24:
+						r, ok := v.(uint32)
+						if ok {
+							if r&0x00800000 != 0 {
+								r |= 0xFF000000
+							}
+							e.Rows[i][j] = int32(r)
+						} else {
+							OK = false
+						}
+					case mysql.MYSQL_TYPE_LONGLONG:
+						r, ok := v.(uint64)
+						if ok {
+							e.Rows[i][j] = int64(r)
+						} else {
+							OK = false
+						}
+					}
+					if !OK {
+						return errors.Errorf("handleSignedness failed: invalid integer type")
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (c *Canal) handleRowsEvent(e *replication.BinlogEvent) error {
 	ev := e.Event.(*replication.RowsEvent)
 
@@ -175,6 +235,12 @@ func (c *Canal) handleRowsEvent(e *replication.BinlogEvent) error {
 	if err != nil {
 		return err
 	}
+
+	// fix signedness of MYSQL_TYPE_INT24 | MYSQL_TYPE_LONG | MYSQL_TYPE_LONGLONG
+	if err := c.handleSignedness(t, ev); err != nil {
+		return err
+	}
+
 	var action string
 	switch e.Header.EventType {
 	case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:

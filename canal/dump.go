@@ -47,7 +47,14 @@ func (h *dumpParseHandler) Data(db string, table string, values []string) error 
 			vs[i] = nil
 		} else if v[0] != '\'' {
 			if tableInfo.Columns[i].Type == schema.TYPE_NUMBER {
-				n, err := strconv.ParseInt(v, 10, 64)
+				var n interface{}
+				var err error
+				if tableInfo.Columns[i].IsUnsigned {
+					n, err = strconv.ParseUint(v, 10, 64)
+				} else {
+					n, err = strconv.ParseInt(v, 10, 64)
+				}
+
 				if err != nil {
 					log.Errorf("parse row %v at %d error %v, skip", values, i, err)
 					return dump.ErrSkip
